@@ -26,6 +26,10 @@ const shopSchema=new mongoose.Schema({
         type:String,
         required:true
     },
+    isBlocked: {
+        type: Boolean,
+        default: false
+    },
     items:[{
         type:mongoose.Schema.Types.ObjectId,
         ref:"Item"
