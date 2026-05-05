@@ -212,7 +212,7 @@ export const placeOrder = async (req, res) => {
                     name: i.name
                 }))
             }
-        }))
+        }));
 
         // ==========================================
         // DEMO ONLINE PAYMENT BYPASS
