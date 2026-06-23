@@ -61,8 +61,7 @@ export const signIn=async (req,res) => {
             httpOnly:true
         })
   
-        // return res.status(200).json(user)
-        return res.status(200).json({ user, token })
+        return res.status(200).json(user)
 
     } catch (error) {
         return res.status(500).json(`sign In error ${error}`)
@@ -149,8 +148,7 @@ export const googleAuth=async (req,res) => {
             httpOnly:true
         })
   
-        // return res.status(200).json(user)
-       return res.status(200).json({ user, token })
+        return res.status(200).json(user)
 
     } catch (error) {
          return res.status(500).json(`googleAuth error ${error}`)
