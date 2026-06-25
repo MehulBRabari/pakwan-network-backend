@@ -18,9 +18,14 @@ import { socketHandler } from "./socket.js"
 const app=express()
 const server=http.createServer(app)
 
+// 2. Socket.IO CORS
 const io=new Server(server,{
    cors:{
-    origin:["http://localhost:5173", "http://localhost:5174"],
+    origin: [
+        "http://localhost:5173", 
+        "http://localhost:5174",
+        "https://pakwan-network.vercel.app"   // <-- add this
+    ],
     credentials:true,
     methods:['POST','GET', 'PUT','DELETE']
 }
@@ -28,13 +33,17 @@ const io=new Server(server,{
 
 app.set("io",io)
 
-
-
 const port=process.env.PORT || 5000
+
 app.use(cors({
-    origin:["http://localhost:5173", "http://localhost:5174"],
-    credentials:true
-}))
+    origin: [
+        "http://localhost:5173", 
+        "http://localhost:5174",
+        "https://pakwan-network.vercel.app"   // <-- add this
+    ],
+    credentials: true
+}));
+
 app.use(express.json())
 app.use(cookieParser())
 // Prevent 304 Not Modified caching for all API routes
