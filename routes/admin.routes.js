@@ -1,17 +1,28 @@
 import express from "express";
-import { adminAddUser, deleteUser, getAllUsers, getDashboardStats, toggleBlockUser, updateUser } from "../controllers/admin.controllers.js";
-import { 
-  getAvailableOwners, 
-  getAllShopsForAdmin, 
-  adminAddShop, 
-  adminUpdateShop, 
-  toggleBlockShop, 
-  deleteShop 
+import {
+  adminAddUser,
+  deleteUser,
+  getAllUsers,
+  getDashboardStats,
+  toggleBlockUser,
+  updateUser,
+} from "../controllers/admin.controllers.js";
+import {
+  getAvailableOwners,
+  getAllShopsForAdmin,
+  adminAddShop,
+  adminUpdateShop,
+  toggleBlockShop,
+  deleteShop,
 } from "../controllers/shopAdmin.controllers.js";
 
-import { 
-  getAvailableShops, getAllItemsForAdmin, adminAddItem, 
-  adminUpdateItem, toggleItemAvailability, deleteItem 
+import {
+  getAvailableShops,
+  getAllItemsForAdmin,
+  adminAddItem,
+  adminUpdateItem,
+  toggleItemAvailability,
+  deleteItem,
 } from "../controllers/itemAdmin.controllers.js";
 
 const router = express.Router();
@@ -20,7 +31,7 @@ router.get("/users", getAllUsers);
 router.put("/users/block/:id", toggleBlockUser);
 router.delete("/users/:id", deleteUser);
 router.post("/users/add", adminAddUser);
-router.put("/users/edit/:id", updateUser); 
+router.put("/users/edit/:id", updateUser);
 
 // Shop Management Routes
 router.get("/owners/available", getAvailableOwners); // For form dropdown
