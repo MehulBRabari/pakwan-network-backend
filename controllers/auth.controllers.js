@@ -2,6 +2,16 @@ import User from "../models/user.model.js";
 import bcrypt, { hash } from "bcryptjs";
 import genToken from "../utils/token.js";
 import { sendOtpMail } from "../utils/mail.js";
+
+// Frontend (vercel.app) and backend (onrender.com) are different sites,
+// so the auth cookie must be SameSite=None + Secure to be sent cross-site.
+const cookieOptions = {
+  httpOnly: true,
+  secure: true,
+  sameSite: "none",
+};
+const AUTH_COOKIE_MAX_AGE = 7 * 24 * 60 * 60 * 1000;
+
 export const signUp = async (req, res) => {
   try {
     const { fullName, email, password, mobile, role } = req.body;
@@ -30,12 +40,7 @@ export const signUp = async (req, res) => {
     });
 
     const token = await genToken(user._id);
-    res.cookie("token", token, {
-      secure: false,
-      sameSite: "strict",
-      maxAge: 7 * 24 * 60 * 60 * 1000,
-      httpOnly: true,
-    });
+    res.cookie("token", token, { ...cookieOptions, maxAge: AUTH_COOKIE_MAX_AGE });
 
     return res.status(201).json(user);
   } catch (error) {
@@ -51,18 +56,19 @@ export const signIn = async (req, res) => {
       return res.status(400).json({ message: "User does not exist." });
     }
 
+    if (!user.password) {
+      return res
+        .status(400)
+        .json({ message: "This account uses Google sign-in. Please continue with Google." });
+    }
+
     const isMatch = await bcrypt.compare(password, user.password);
     if (!isMatch) {
       return res.status(400).json({ message: "incorrect Password" });
     }
 
     const token = await genToken(user._id);
-    res.cookie("token", token, {
-      secure: false,
-      sameSite: "strict",
-      maxAge: 7 * 24 * 60 * 60 * 1000,
-      httpOnly: true,
-    });
+    res.cookie("token", token, { ...cookieOptions, maxAge: AUTH_COOKIE_MAX_AGE });
 
     return res.status(200).json(user);
   } catch (error) {
@@ -72,7 +78,7 @@ export const signIn = async (req, res) => {
 
 export const signOut = async (req, res) => {
   try {
-    res.clearCookie("token");
+    res.clearCookie("token", cookieOptions);
     return res.status(200).json({ message: "log out successfully" });
   } catch (error) {
     return res.status(500).json(`sign out error ${error}`);
@@ -146,12 +152,7 @@ export const googleAuth = async (req, res) => {
     }
 
     const token = await genToken(user._id);
-    res.cookie("token", token, {
-      secure: false,
-      sameSite: "strict",
-      maxAge: 7 * 24 * 60 * 60 * 1000,
-      httpOnly: true,
-    });
+    res.cookie("token", token, { ...cookieOptions, maxAge: AUTH_COOKIE_MAX_AGE });
 
     return res.status(200).json(user);
   } catch (error) {
