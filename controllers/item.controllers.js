@@ -2,16 +2,28 @@ import Item from "../models/item.model.js";
 import Shop from "../models/shop.model.js";
 import uploadOnCloudinary from "../utils/cloudinary.js";
 
+const validationMessage = (error) =>
+  error?.name === "ValidationError" || error?.name === "CastError"
+    ? Object.values(error.errors || {})
+        .map((e) => e.message)
+        .join(", ") || error.message
+    : null;
+
 export const addItem = async (req, res) => {
   try {
     const { name, category, foodType, price } = req.body;
-    let image;
-    if (req.file) {
-      image = await uploadOnCloudinary(req.file.path);
-    }
     const shop = await Shop.findOne({ owner: req.userId });
     if (!shop) {
       return res.status(400).json({ message: "shop not found" });
+    }
+    if (!req.file) {
+      return res.status(400).json({ message: "Please upload a food image." });
+    }
+    let image;
+    try {
+      image = await uploadOnCloudinary(req.file.path);
+    } catch (uploadError) {
+      return res.status(500).json({ message: uploadError.message });
     }
     const item = await Item.create({
       name,
@@ -31,7 +43,10 @@ export const addItem = async (req, res) => {
     });
     return res.status(201).json(shop);
   } catch (error) {
-    return res.status(500).json({ message: `add item error ${error}` });
+    const invalid = validationMessage(error);
+    if (invalid) return res.status(400).json({ message: invalid });
+    console.error("add item error:", error);
+    return res.status(500).json({ message: `add item error ${error.message}` });
   }
 };
 
@@ -39,31 +54,43 @@ export const editItem = async (req, res) => {
   try {
     const itemId = req.params.itemId;
     const { name, category, foodType, price } = req.body;
-    let image;
-    if (req.file) {
-      image = await uploadOnCloudinary(req.file.path);
+
+    // Only the owner of the shop may edit its items
+    const ownShop = await Shop.findOne({ owner: req.userId });
+    if (!ownShop) {
+      return res.status(400).json({ message: "shop not found" });
     }
-    const item = await Item.findByIdAndUpdate(
-      itemId,
-      {
-        name,
-        category,
-        foodType,
-        price,
-        image,
-      },
-      { new: true },
-    );
-    if (!item) {
+    const existing = await Item.findOne({ _id: itemId, shop: ownShop._id });
+    if (!existing) {
       return res.status(400).json({ message: "item not found" });
     }
+
+    let image;
+    if (req.file) {
+      try {
+        image = await uploadOnCloudinary(req.file.path);
+      } catch (uploadError) {
+        return res.status(500).json({ message: uploadError.message });
+      }
+    }
+
+    const updates = { name, category, foodType, price };
+    if (image) updates.image = image; // keep the old image if no new one was uploaded
+    await Item.findByIdAndUpdate(itemId, updates, {
+      new: true,
+      runValidators: true,
+    });
+
     const shop = await Shop.findOne({ owner: req.userId }).populate({
       path: "items",
       options: { sort: { updatedAt: -1 } },
     });
     return res.status(200).json(shop);
   } catch (error) {
-    return res.status(500).json({ message: `edit item error ${error}` });
+    const invalid = validationMessage(error);
+    if (invalid) return res.status(400).json({ message: invalid });
+    console.error("edit item error:", error);
+    return res.status(500).json({ message: `edit item error ${error.message}` });
   }
 };
 

@@ -1,15 +1,48 @@
 import Shop from "../models/shop.model.js";
 import uploadOnCloudinary from "../utils/cloudinary.js";
 
+// FormData sends missing values as the strings "undefined" / "null"
+const cleanText = (value) => {
+  const text = String(value ?? "").trim();
+  return text === "undefined" || text === "null" ? "" : text;
+};
+
 export const createEditShop = async (req, res) => {
   try {
-    const { name, city, state, address } = req.body;
+    const name = cleanText(req.body.name);
+    const city = cleanText(req.body.city);
+    const state = cleanText(req.body.state);
+    const address = cleanText(req.body.address);
+
+    const missing = [
+      ["name", name],
+      ["city", city],
+      ["state", state],
+      ["address", address],
+    ]
+      .filter(([, value]) => !value)
+      .map(([field]) => field);
+    if (missing.length) {
+      return res
+        .status(400)
+        .json({ message: `Please fill in the shop ${missing.join(", ")}.` });
+    }
+
+    let shop = await Shop.findOne({ owner: req.userId });
+
+    if (!shop && !req.file) {
+      return res.status(400).json({ message: "Please upload a shop image." });
+    }
+
     let image;
     if (req.file) {
-      console.log(req.file);
-      image = await uploadOnCloudinary(req.file.path);
+      try {
+        image = await uploadOnCloudinary(req.file.path);
+      } catch (uploadError) {
+        return res.status(500).json({ message: uploadError.message });
+      }
     }
-    let shop = await Shop.findOne({ owner: req.userId });
+
     if (!shop) {
       shop = await Shop.create({
         name,
@@ -19,25 +52,21 @@ export const createEditShop = async (req, res) => {
         image,
         owner: req.userId,
       });
-    } else {
-      shop = await Shop.findByIdAndUpdate(
-        shop._id,
-        {
-          name,
-          city,
-          state,
-          address,
-          image,
-          owner: req.userId,
-        },
-        { new: true },
-      );
+      await shop.populate("owner items");
+      return res.status(201).json(shop);
     }
 
+    const updates = { name, city, state, address };
+    if (image) updates.image = image; // keep the old image if no new one was uploaded
+    shop = await Shop.findByIdAndUpdate(shop._id, updates, {
+      new: true,
+      runValidators: true,
+    });
     await shop.populate("owner items");
-    return res.status(201).json(shop);
+    return res.status(200).json(shop);
   } catch (error) {
-    return res.status(500).json({ message: `create shop error ${error}` });
+    console.error("create/edit shop error:", error);
+    return res.status(500).json({ message: `create shop error ${error.message}` });
   }
 };
 

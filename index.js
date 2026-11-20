@@ -60,6 +60,19 @@ app.use("/api/item",itemRouter)
 app.use("/api/order",orderRouter)
 app.use("/api/admin", adminRouter);
 
+// Turn upload errors (wrong file type, file too large) and any other
+// unhandled error into a clear JSON response instead of an HTML 500 page.
+app.use((err, req, res, next) => {
+    if (res.headersSent) return next(err)
+    if (err.name === "MulterError") {
+        const message = err.code === "LIMIT_FILE_SIZE" ? "Image is too large (max 5 MB)" : err.message
+        return res.status(400).json({ message })
+    }
+    if (err.status === 400) return res.status(400).json({ message: err.message })
+    console.error("Unhandled error:", err)
+    return res.status(500).json({ message: "Something went wrong on the server" })
+})
+
 socketHandler(io)
 server.listen(port,()=>{
     connectDb()
