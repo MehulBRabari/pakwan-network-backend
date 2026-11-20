@@ -346,6 +346,19 @@ export const verifyPayment = async (req, res) => {
   }
 };
 
+// The delivery OTP must only ever be visible to the customer.
+// Returns a plain copy of a shop order without the OTP fields.
+const withoutOtp = (shopOrder) => {
+  if (!shopOrder) return shopOrder;
+  const plain =
+    typeof shopOrder.toObject === "function" ? shopOrder.toObject() : { ...shopOrder };
+  delete plain.deliveryOtp;
+  delete plain.otpExpires;
+  return plain;
+};
+
+const DELIVERY_OTP_TTL_MS = 10 * 60 * 1000; // 10 minutes
+
 export const getMyOrders = async (req, res) => {
   try {
     const user = await User.findById(req.userId);
@@ -369,7 +382,9 @@ export const getMyOrders = async (req, res) => {
         _id: order._id,
         paymentMethod: order.paymentMethod,
         user: order.user,
-        shopOrders: order.shopOrders.find((o) => o.owner._id == req.userId),
+        shopOrders: withoutOtp(
+          order.shopOrders.find((o) => o.owner._id == req.userId),
+        ),
         createdAt: order.createdAt,
         deliveryAddress: order.deliveryAddress,
         payment: order.payment,
@@ -647,7 +662,7 @@ export const getCurrentOrder = async (req, res) => {
     return res.status(200).json({
       _id: assignment.order._id,
       user: assignment.order.user,
-      shopOrder,
+      shopOrder: withoutOtp(shopOrder), // the delivery partner must not see the OTP
       deliveryAddress: assignment.order.deliveryAddress,
       deliveryBoyLocation,
       customerLocation,
@@ -681,51 +696,115 @@ export const getOrderById = async (req, res) => {
     if (!order) {
       return res.status(400).json({ message: "order not found" });
     }
+
+    const me = String(req.userId);
+    const isCustomer = String(order.user?._id || order.user) === me;
+    const isOwner = order.shopOrders?.some((so) => String(so.owner) === me);
+    const isDeliveryPartner = order.shopOrders?.some(
+      (so) => String(so.assignedDeliveryBoy?._id || so.assignedDeliveryBoy) === me,
+    );
+    if (!isCustomer && !isOwner && !isDeliveryPartner) {
+      return res.status(403).json({ message: "Not authorized to view this order" });
+    }
+    if (!isCustomer) {
+      order.shopOrders = order.shopOrders.map(withoutOtp);
+    }
     return res.status(200).json(order);
   } catch (error) {
     return res.status(500).json({ message: `get by id order error ${error}` });
   }
 };
 
+// Finds the order + shop order and checks that the logged-in user is the
+// delivery partner assigned to it. Returns { order, shopOrder } or { error }.
+const loadAssignedShopOrder = async (orderId, shopOrderId, userId) => {
+  const order = await Order.findById(orderId).populate("user");
+  const shopOrder = order?.shopOrders?.id(shopOrderId);
+  if (!order || !shopOrder) {
+    return { error: [400, "enter valid order/shopOrderid"] };
+  }
+  if (String(shopOrder.assignedDeliveryBoy) !== String(userId)) {
+    return { error: [403, "This order is not assigned to you"] };
+  }
+  if (shopOrder.status === "delivered") {
+    return { error: [400, "This order is already delivered"] };
+  }
+  return { order, shopOrder };
+};
+
 export const sendDeliveryOtp = async (req, res) => {
   try {
     const { orderId, shopOrderId } = req.body;
-    const order = await Order.findById(orderId).populate("user");
-    const shopOrder = order.shopOrders.id(shopOrderId);
-    if (!order || !shopOrder) {
-      return res.status(400).json({ message: "enter valid order/shopOrderid" });
-    }
+    const { order, shopOrder, error } = await loadAssignedShopOrder(
+      orderId,
+      shopOrderId,
+      req.userId,
+    );
+    if (error) return res.status(error[0]).json({ message: error[1] });
+
     const otp = Math.floor(1000 + Math.random() * 9000).toString();
+    const otpExpires = new Date(Date.now() + DELIVERY_OTP_TTL_MS);
     shopOrder.deliveryOtp = otp;
-    shopOrder.otpExpires = Date.now() + 5 * 60 * 1000;
+    shopOrder.otpExpires = otpExpires;
     await order.save();
-    await sendDeliveryOtpMail(order.user, otp);
-    return res
-      .status(200)
-      .json({ message: `Otp sent Successfuly to ${order?.user?.fullName}` });
+
+    // 1) Show the OTP instantly in the customer's app (My Orders / Track Order)
+    const io = req.app.get("io");
+    const customerSocketId = order.user?.socketId;
+    if (io && customerSocketId) {
+      io.to(customerSocketId).emit("deliveryOtp", {
+        orderId: String(order._id),
+        shopOrderId: String(shopOrder._id),
+        shopId: String(shopOrder.shop),
+        otp,
+        otpExpires,
+      });
+    }
+
+    // 2) Also email it, in the background, so a slow mail server
+    //    never blocks the delivery partner's screen
+    sendDeliveryOtpMail(order.user, otp).catch((mailError) =>
+      console.error("Delivery OTP email failed:", mailError.message),
+    );
+
+    return res.status(200).json({
+      message: `OTP sent to ${order.user?.fullName || "the customer"}. They can see it in their app (My Orders) and email.`,
+    });
   } catch (error) {
-    return res.status(500).json({ message: `delivery otp error ${error}` });
+    console.error("send delivery otp error:", error);
+    return res.status(500).json({ message: `delivery otp error ${error.message}` });
   }
 };
 
 export const verifyDeliveryOtp = async (req, res) => {
   try {
-    const { orderId, shopOrderId, otp } = req.body;
-    const order = await Order.findById(orderId).populate("user");
-    const shopOrder = order.shopOrders.id(shopOrderId);
-    if (!order || !shopOrder) {
-      return res.status(400).json({ message: "enter valid order/shopOrderid" });
+    const { orderId, shopOrderId } = req.body;
+    const otp = String(req.body.otp ?? "").trim();
+    const { order, shopOrder, error } = await loadAssignedShopOrder(
+      orderId,
+      shopOrderId,
+      req.userId,
+    );
+    if (error) return res.status(error[0]).json({ message: error[1] });
+
+    if (!shopOrder.deliveryOtp || !shopOrder.otpExpires) {
+      return res
+        .status(400)
+        .json({ message: "No OTP generated yet. Please tap Mark As Delivered again." });
     }
-    if (
-      shopOrder.deliveryOtp !== otp ||
-      !shopOrder.otpExpires ||
-      shopOrder.otpExpires < Date.now()
-    ) {
-      return res.status(400).json({ message: "Invalid/Expired Otp" });
+    if (new Date(shopOrder.otpExpires).getTime() < Date.now()) {
+      return res
+        .status(400)
+        .json({ message: "OTP expired. Please send a new OTP." });
+    }
+    if (shopOrder.deliveryOtp !== otp) {
+      return res.status(400).json({ message: "Wrong OTP. Please check with the customer." });
     }
 
     shopOrder.status = "delivered";
     shopOrder.deliveredAt = Date.now();
+    shopOrder.deliveryOtp = undefined;
+    shopOrder.otpExpires = undefined;
     await order.save();
     await DeliveryAssignment.deleteOne({
       shopOrderId: shopOrder._id,
@@ -733,11 +812,35 @@ export const verifyDeliveryOtp = async (req, res) => {
       assignedTo: shopOrder.assignedDeliveryBoy,
     });
 
+    // Tell the customer and the shop owner right away
+    const io = req.app.get("io");
+    if (io) {
+      const payload = {
+        orderId: order._id,
+        shopId: shopOrder.shop,
+        status: "delivered",
+      };
+      if (order.user?.socketId) {
+        io.to(order.user.socketId).emit("update-status", {
+          ...payload,
+          userId: order.user._id,
+        });
+      }
+      const owner = await User.findById(shopOrder.owner).select("socketId");
+      if (owner?.socketId) {
+        io.to(owner.socketId).emit("update-status", {
+          ...payload,
+          userId: owner._id,
+        });
+      }
+    }
+
     return res.status(200).json({ message: "Order Delivered Successfully!" });
   } catch (error) {
+    console.error("verify delivery otp error:", error);
     return res
       .status(500)
-      .json({ message: `verify delivery otp error ${error}` });
+      .json({ message: `verify delivery otp error ${error.message}` });
   }
 };
 

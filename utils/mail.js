@@ -9,6 +9,10 @@ const transporter = nodemailer.createTransport({
     user: process.env.EMAIL,
     pass: process.env.PASS,
   },
+  // Fail fast instead of hanging if the mail server can't be reached
+  connectionTimeout: 10000,
+  greetingTimeout: 10000,
+  socketTimeout: 15000,
 });
 
 export const sendOtpMail=async (to,otp) => {
@@ -26,6 +30,6 @@ export const sendDeliveryOtpMail=async (user,otp) => {
         from:process.env.EMAIL,
         to:user.email,
         subject:"Delivery OTP",
-        html:`<p>Your OTP for delivery is <b>${otp}</b>. It expires in 5 minutes.</p>`
+        html:`<p>Your OTP for delivery is <b>${otp}</b>. It expires in 10 minutes. You can also see it in the Pakwan Network app under My Orders.</p>`
     })
 }
